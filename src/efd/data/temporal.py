@@ -4,6 +4,18 @@ import numpy as np
 import pandas as pd
 
 
+def transaction_date(
+    transaction_dt: float,
+    reference_date: str | pd.Timestamp,
+) -> str:
+    """Return the ISO calendar date for a TransactionDT offset in seconds."""
+    timestamp = pd.Timestamp(reference_date) + pd.to_timedelta(
+        transaction_dt,
+        unit="s",
+    )
+    return timestamp.date().isoformat()
+
+
 def chronological_windows(
     frame: pd.DataFrame,
     time_col: str = "TransactionDT",
@@ -70,15 +82,15 @@ def chronological_windows(
     future = ordered.iloc[split_idx:].copy()
 
     # Equal-count windows.
-    raw_windows = np.array_split(
-        future,
-        n_future_windows
+    window_indices = np.array_split(
+        np.arange(len(future)),
+        n_future_windows,
     )
 
     future_windows = [
-        window.copy()
-        for window in raw_windows
-        if len(window) > 0
+        future.iloc[indices].copy()
+        for indices in window_indices
+        if len(indices) > 0
     ]
 
     return train, future_windows

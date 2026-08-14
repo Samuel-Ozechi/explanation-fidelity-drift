@@ -1,0 +1,11 @@
+BASELINE 1 PREPROCESSING
+
+Selected features: 376
+Maximum missing rate: 0.95
+Removed high-missing features: 0
+Removed constants: 1
+
+High-missing features:
+
+Constant features:
+V107
