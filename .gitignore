@@ -1,2 +1,3 @@
-.envsrc/data/raw/*.csv
+src/data/raw/*.csv
 .env
+.venv
