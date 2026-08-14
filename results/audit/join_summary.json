@@ -1,0 +1,8 @@
+{
+  "transaction_rows_considered": 590540,
+  "identity_unique_transaction_ids": 144233,
+  "matched_transaction_rows": 144233,
+  "matched_rate": 0.2442391709283029,
+  "unmatched_transaction_rows": 446307,
+  "join_type_for_modeling": "left"
+}
