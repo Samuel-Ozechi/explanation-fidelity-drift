@@ -1,6 +1,4 @@
-src/data/raw/*.csv
 .env
 .venv
 *.egg-info/
-data/
 

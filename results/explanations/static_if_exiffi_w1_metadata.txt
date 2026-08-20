@@ -1,0 +1,18 @@
+BASELINE 1 + EXIFFI
+
+Training observations: 354324
+Future windows: 4
+Window explained: 1
+Observations explained: 100
+Features: 376
+Trees: 300
+Random state: 42
+
+ExIFFI:
+Standard Isolation Forest axis-aligned splits
+Node feature direction = selected feature axis
+Path weight = parent_node_samples / child_node_samples
+
+Outputs:
+results/explanations/static_if_exiffi_w1_sample.csv
+results/explanations/static_if_exiffi_w1_top_features.csv

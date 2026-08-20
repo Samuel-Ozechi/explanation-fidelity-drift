@@ -1,0 +1,46 @@
+experiment:
+  name: exiffi_v1
+  parent_experiment: baseline_1_static_if_v1
+
+data:
+  transactions:
+    path: data/raw/ieee_cis/train_transaction.csv
+
+model:
+  algorithm: IsolationForest
+  n_estimators: 300
+  random_state: 42
+
+representation:
+  name: transaction_numeric_v1
+
+  exclude:
+    - TransactionID
+    - TransactionDT
+    - isFraud
+
+  n_features: 376
+
+explanation:
+  method: ExIFFI
+
+  scope:
+    local: true
+    global: true
+
+  top_k:
+    - 1
+    - 5
+    - 10
+    - 20
+
+validation:
+  perturbation:
+    enabled: true
+
+    strategies:
+      - median
+
+  metrics:
+    - score_change
+    - normalized_score_change
