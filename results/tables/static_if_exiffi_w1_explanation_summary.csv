@@ -1,0 +1,2 @@
+window,n_features,n_observations,n_samples,mean_top_1_mass,mean_top_5_mass,mean_top_10_mass,mean_entropy,mean_effective_features,mean_nonzero_features,median_top_1_mass,median_top_5_mass,median_top_10_mass,median_entropy,median_effective_features,median_nonzero_features
+1,376,100,100.0,0.06814863475019428,0.20425787399107778,0.2914040984941918,5.102212726033434,189.8493355144984,367.0,0.06586493006826635,0.22428163529345152,0.3034452190312063,5.126921143780599,168.4987189495445,367.0
