@@ -1,0 +1,17 @@
+BASELINE 1 — TEMPORAL EXIFFI EXPLANATIONS
+======================================================================
+
+Transactions: data/raw/ieee_cis/train_transaction.csv
+Training fraction: 0.6
+Future windows: 4
+Sample size per window: 100
+Sampling strategy: stratified
+Random state: 42
+Isolation Forest trees: 300
+Features: 376
+
+ window  n_observations  n_sampled  n_fraud  n_nonfraud  sampled_fraud  sampled_nonfraud sample_strategy          date_start            date_end  n_features  n_estimators  random_state
+      1           59054        100     2550       56504             50                50      stratified 2018-03-12 05:23:18 2018-03-31 19:26:36         376           300            42
+      2           59054        100     2061       56993             50                50      stratified 2018-03-31 19:26:43 2018-04-21 02:54:02         376           300            42
+      3           59054        100     1851       57203             50                50      stratified 2018-04-21 02:55:00 2018-05-11 22:21:44         376           300            42
+      4           59054        100     2213       56841             50                50      stratified 2018-05-11 22:22:21 2018-06-01 23:58:51         376           300            42
