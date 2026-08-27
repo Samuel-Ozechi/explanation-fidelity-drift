@@ -1,449 +1,369 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable
-
 import numpy as np
 import pandas as pd
-from scipy.spatial.distance import cosine
+from scipy.spatial.distance import jensenshannon
 from scipy.stats import spearmanr
 
 
-EPS = 1e-12
+def _validate_matrix(X: np.ndarray) -> np.ndarray:
+    X = np.asarray(X, dtype=float)
 
-
-@dataclass
-class ExplanationDriftResult:
-    """
-    Pairwise drift between two temporal explanation windows.
-    """
-
-    window_a: int
-    window_b: int
-
-    js_divergence: float
-    total_variation: float
-    cosine_distance: float
-    cosine_similarity: float
-    spearman_correlation: float
-
-    top_1_overlap: float
-    top_5_overlap: float
-    top_10_overlap: float
-    top_20_overlap: float
-
-    top_1_jaccard: float
-    top_5_jaccard: float
-    top_10_jaccard: float
-    top_20_jaccard: float
-
-
-def _normalize_distribution(
-    values: np.ndarray,
-) -> np.ndarray:
-
-    values = np.asarray(
-        values,
-        dtype=float,
-    )
-
-    values = np.clip(
-        values,
-        0.0,
-        None,
-    )
-
-    total = values.sum()
-
-    if total <= EPS:
-        return np.zeros_like(values)
-
-    return values / total
-
-
-def _mean_explanation_distribution(
-    importance: np.ndarray,
-) -> np.ndarray:
-
-    importance = np.asarray(
-        importance,
-        dtype=float,
-    )
-
-    if importance.ndim != 2:
+    if X.ndim != 2:
         raise ValueError(
-            "importance must be a 2D matrix."
+            "Importance matrix must be 2-dimensional."
         )
 
-    mean_importance = np.mean(
-        importance,
-        axis=0,
-    )
-
-    return _normalize_distribution(
-        mean_importance
-    )
-
-
-def _js_divergence(
-    p: np.ndarray,
-    q: np.ndarray,
-) -> float:
-
-    p = _normalize_distribution(p)
-    q = _normalize_distribution(q)
-
-    midpoint = 0.5 * (p + q)
-
-    def kl_divergence(
-        a: np.ndarray,
-        b: np.ndarray,
-    ) -> float:
-
-        mask = a > EPS
-
-        return float(
-            np.sum(
-                a[mask]
-                * np.log(
-                    a[mask]
-                    / np.maximum(
-                        b[mask],
-                        EPS,
-                    )
-                )
-            )
+    if X.shape[0] == 0 or X.shape[1] == 0:
+        raise ValueError(
+            "Importance matrix must not be empty."
         )
 
-    return float(
-        0.5
-        * kl_divergence(p, midpoint)
-        + 0.5
-        * kl_divergence(q, midpoint)
-    )
+    if not np.isfinite(X).all():
+        raise ValueError(
+            "Importance matrix contains non-finite values."
+        )
+
+    return X
 
 
-def _total_variation(
-    p: np.ndarray,
-    q: np.ndarray,
+def _mean_distribution(
+    X: np.ndarray,
+) -> np.ndarray:
+
+    X = _validate_matrix(X)
+
+    # ExIFFI importance values are treated as
+    # non-negative contribution magnitudes for
+    # distributional comparison.
+    X = np.clip(X, 0.0, None)
+
+    distribution = X.mean(axis=0)
+
+    total = distribution.sum()
+
+    if total <= 0:
+        return np.full(
+            X.shape[1],
+            1.0 / X.shape[1],
+        )
+
+    return distribution / total
+
+
+def cosine_distance(
+    X_a: np.ndarray,
+    X_b: np.ndarray,
 ) -> float:
 
-    p = _normalize_distribution(p)
-    q = _normalize_distribution(q)
+    a = _mean_distribution(X_a)
+    b = _mean_distribution(X_b)
 
-    return float(
-        0.5 * np.sum(np.abs(p - q))
-    )
+    if a.shape != b.shape:
+        raise ValueError(
+            "Matrices must have the same number of features."
+        )
 
-
-def _cosine_similarity(
-    p: np.ndarray,
-    q: np.ndarray,
-) -> float:
-
-    p = np.asarray(p, dtype=float)
-    q = np.asarray(q, dtype=float)
-
-    p_norm = np.linalg.norm(p)
-    q_norm = np.linalg.norm(q)
-
-    if p_norm <= EPS or q_norm <= EPS:
-        return 0.0
-
-    return float(
-        np.dot(p, q)
-        / (p_norm * q_norm)
-    )
-
-
-def _spearman_correlation(
-    p: np.ndarray,
-    q: np.ndarray,
-) -> float:
-
-    correlation, _ = spearmanr(
-        p,
-        q,
-    )
-
-    if np.isnan(correlation):
-        return 0.0
-
-    return float(correlation)
-
-
-def _top_k_indices(
-    distribution: np.ndarray,
-    k: int,
-) -> set[int]:
-
-    k = min(
-        k,
-        len(distribution),
-    )
-
-    indices = np.argsort(
-        -distribution
-    )[:k]
-
-    return set(
-        int(index)
-        for index in indices
-    )
-
-
-def _jaccard(
-    a: set[int],
-    b: set[int],
-) -> float:
-
-    union = a | b
-
-    if not union:
-        return 1.0
-
-    return float(
-        len(a & b) / len(union)
-    )
-
-
-def _overlap_coefficient(
-    a: set[int],
-    b: set[int],
-) -> float:
-
-    denominator = min(
-        len(a),
-        len(b),
+    denominator = (
+        np.linalg.norm(a)
+        * np.linalg.norm(b)
     )
 
     if denominator == 0:
         return 0.0
 
-    return float(
-        len(a & b) / denominator
-    )
-
-
-def evaluate_pairwise_drift(
-    importance_a: np.ndarray,
-    importance_b: np.ndarray,
-    window_a: int,
-    window_b: int,
-) -> ExplanationDriftResult:
-    """
-    Evaluate explanation distribution drift between
-    two temporal windows.
-
-    Parameters
-    ----------
-    importance_a:
-        Explanation matrix for window A.
-        Shape: (n_observations, n_features)
-
-    importance_b:
-        Explanation matrix for window B.
-        Shape: (n_observations, n_features)
-
-    window_a:
-        Identifier for the first temporal window.
-
-    window_b:
-        Identifier for the second temporal window.
-    """
-
-    importance_a = np.asarray(
-        importance_a,
-        dtype=float,
-    )
-
-    importance_b = np.asarray(
-        importance_b,
-        dtype=float,
-    )
-
-    if importance_a.ndim != 2:
-        raise ValueError(
-            "importance_a must be two-dimensional."
-        )
-
-    if importance_b.ndim != 2:
-        raise ValueError(
-            "importance_b must be two-dimensional."
-        )
-
-    if (
-        importance_a.shape[1]
-        != importance_b.shape[1]
-    ):
-        raise ValueError(
-            "Both explanation matrices must "
-            "have the same number of features."
-        )
-
-    distribution_a = (
-        _mean_explanation_distribution(
-            importance_a
-        )
-    )
-
-    distribution_b = (
-        _mean_explanation_distribution(
-            importance_b
-        )
-    )
-
-    top_sets_a = {
-        k: _top_k_indices(
-            distribution_a,
-            k,
-        )
-        for k in (1, 5, 10, 20)
-    }
-
-    top_sets_b = {
-        k: _top_k_indices(
-            distribution_b,
-            k,
-        )
-        for k in (1, 5, 10, 20)
-    }
-
-    return ExplanationDriftResult(
-        window_a=window_a,
-        window_b=window_b,
-        js_divergence=_js_divergence(
-            distribution_a,
-            distribution_b,
-        ),
-        total_variation=_total_variation(
-            distribution_a,
-            distribution_b,
-        ),
-        cosine_distance=float(
-            cosine(
-                distribution_a,
-                distribution_b,
-            )
-        ),
-        cosine_similarity=_cosine_similarity(
-            distribution_a,
-            distribution_b,
-        ),
-        spearman_correlation=_spearman_correlation(
-            distribution_a,
-            distribution_b,
-        ),
-        top_1_overlap=_overlap_coefficient(
-            top_sets_a[1],
-            top_sets_b[1],
-        ),
-        top_5_overlap=_overlap_coefficient(
-            top_sets_a[5],
-            top_sets_b[5],
-        ),
-        top_10_overlap=_overlap_coefficient(
-            top_sets_a[10],
-            top_sets_b[10],
-        ),
-        top_20_overlap=_overlap_coefficient(
-            top_sets_a[20],
-            top_sets_b[20],
-        ),
-        top_1_jaccard=_jaccard(
-            top_sets_a[1],
-            top_sets_b[1],
-        ),
-        top_5_jaccard=_jaccard(
-            top_sets_a[5],
-            top_sets_b[5],
-        ),
-        top_10_jaccard=_jaccard(
-            top_sets_a[10],
-            top_sets_b[10],
-        ),
-        top_20_jaccard=_jaccard(
-            top_sets_a[20],
-            top_sets_b[20],
-        ),
-    )
-
-
-def feature_level_drift(
-    importance_a: np.ndarray,
-    importance_b: np.ndarray,
-    feature_names: Iterable[str],
-    window_a: int,
-    window_b: int,
-) -> pd.DataFrame:
-    """
-    Calculate feature-level explanation changes between
-    two temporal windows.
-    """
-
-    importance_a = np.asarray(
-        importance_a,
-        dtype=float,
-    )
-
-    importance_b = np.asarray(
-        importance_b,
-        dtype=float,
-    )
-
-    if importance_a.shape[1] != importance_b.shape[1]:
-        raise ValueError(
-            "Explanation matrices must have "
-            "the same feature dimension."
-        )
-
-    feature_names = list(feature_names)
-
-    if len(feature_names) != importance_a.shape[1]:
-        raise ValueError(
-            "feature_names length does not match "
-            "the explanation matrix."
-        )
-
-    mean_a = np.mean(
-        importance_a,
-        axis=0,
-    )
-
-    mean_b = np.mean(
-        importance_b,
-        axis=0,
-    )
-
-    absolute_change = np.abs(
-        mean_b - mean_a
-    )
-
-    denominator = np.maximum(
-        np.abs(mean_a),
-        EPS,
-    )
-
-    relative_change = (
-        (mean_b - mean_a)
+    similarity = (
+        np.dot(a, b)
         / denominator
+    )
+
+    if np.isclose(
+        similarity,
+        1.0,
+    ):
+        return 0.0
+
+    return float(
+        1.0 - similarity
+    )
+
+
+def l1_distance(
+    X_a: np.ndarray,
+    X_b: np.ndarray,
+) -> float:
+
+    a = _mean_distribution(X_a)
+    b = _mean_distribution(X_b)
+
+    if a.shape != b.shape:
+        raise ValueError(
+            "Matrices must have the same number of features."
+        )
+
+    return float(
+        np.abs(a - b).sum()
+    )
+
+
+def l2_distance(
+    X_a: np.ndarray,
+    X_b: np.ndarray,
+) -> float:
+
+    a = _mean_distribution(X_a)
+    b = _mean_distribution(X_b)
+
+    if a.shape != b.shape:
+        raise ValueError(
+            "Matrices must have the same number of features."
+        )
+
+    return float(
+        np.linalg.norm(a - b)
+    )
+
+
+def js_divergence(
+    X_a: np.ndarray,
+    X_b: np.ndarray,
+) -> float:
+
+    a = _mean_distribution(X_a)
+    b = _mean_distribution(X_b)
+
+    if a.shape != b.shape:
+        raise ValueError(
+            "Matrices must have the same number of features."
+        )
+
+    return float(
+        jensenshannon(
+            a,
+            b,
+            base=2.0,
+        )
+        ** 2
+    )
+
+
+def rank_correlation(
+    X_a: np.ndarray,
+    X_b: np.ndarray,
+) -> float:
+
+    a = _mean_distribution(X_a)
+    b = _mean_distribution(X_b)
+
+    if a.shape != b.shape:
+        raise ValueError(
+            "Matrices must have the same number of features."
+        )
+
+    result = spearmanr(
+        a,
+        b,
+    )
+
+    statistic = result.statistic
+
+    if not np.isfinite(statistic):
+        return 0.0
+
+    return float(statistic)
+
+
+def top_k_features(
+    X: np.ndarray,
+    k: int,
+) -> set[int]:
+
+    X = _validate_matrix(X)
+
+    if k <= 0:
+        raise ValueError(
+            "k must be positive."
+        )
+
+    k = min(
+        k,
+        X.shape[1],
+    )
+
+    mean_importance = X.mean(
+        axis=0
+    )
+
+    indices = np.argsort(
+        -mean_importance
+    )[:k]
+
+    return set(
+        indices.tolist()
+    )
+
+
+def top_k_jaccard(
+    X_a: np.ndarray,
+    X_b: np.ndarray,
+    k: int,
+) -> float:
+
+    features_a = top_k_features(
+        X_a,
+        k,
+    )
+
+    features_b = top_k_features(
+        X_b,
+        k,
+    )
+
+    union = (
+        features_a
+        | features_b
+    )
+
+    if not union:
+        return 1.0
+
+    intersection = (
+        features_a
+        & features_b
+    )
+
+    return float(
+        len(intersection)
+        / len(union)
+    )
+
+
+def feature_drift_table(
+    X_a: np.ndarray,
+    X_b: np.ndarray,
+    feature_names: list[str],
+    label_a: str,
+    label_b: str,
+) -> pd.DataFrame:
+
+    X_a = _validate_matrix(X_a)
+    X_b = _validate_matrix(X_b)
+
+    if X_a.shape[1] != X_b.shape[1]:
+        raise ValueError(
+            "Matrices must have the same number of features."
+        )
+
+    if len(feature_names) != X_a.shape[1]:
+        raise ValueError(
+            "feature_names length does not match matrix width."
+        )
+
+    distribution_a = _mean_distribution(
+        X_a
+    )
+
+    distribution_b = _mean_distribution(
+        X_b
+    )
+
+    rank_a = (
+        pd.Series(distribution_a)
+        .rank(
+            method="average",
+            ascending=False,
+        )
+        .to_numpy()
+    )
+
+    rank_b = (
+        pd.Series(distribution_b)
+        .rank(
+            method="average",
+            ascending=False,
+        )
+        .to_numpy()
     )
 
     result = pd.DataFrame(
         {
-            "window_a": window_a,
-            "window_b": window_b,
             "feature": feature_names,
-            "mean_importance_a": mean_a,
-            "mean_importance_b": mean_b,
-            "absolute_change": absolute_change,
-            "relative_change": relative_change,
+
+            f"mean_importance_{label_a}":
+                distribution_a,
+
+            f"mean_importance_{label_b}":
+                distribution_b,
+
+            "importance_change":
+                distribution_b
+                - distribution_a,
+
+            f"rank_{label_a}":
+                rank_a.astype(int),
+
+            f"rank_{label_b}":
+                rank_b.astype(int),
+
+            "rank_change":
+                rank_b - rank_a,
+
+            "absolute_importance_change":
+                np.abs(
+                    distribution_b
+                    - distribution_a
+                ),
         }
     )
 
-    return result.sort_values(
-        "absolute_change",
-        ascending=False,
-    ).reset_index(
-        drop=True
+    return (
+        result
+        .sort_values(
+            "absolute_importance_change",
+            ascending=False,
+        )
+        .reset_index(drop=True)
     )
+
+
+def explanation_drift_summary(
+    X_a: np.ndarray,
+    X_b: np.ndarray,
+    label_a: str,
+    label_b: str,
+) -> dict:
+
+    return {
+        "comparison":
+            f"{label_a}_{label_b}",
+
+        "cosine_distance":
+            cosine_distance(
+                X_a,
+                X_b,
+            ),
+
+        "js_divergence":
+            js_divergence(
+                X_a,
+                X_b,
+            ),
+
+        "l1_distance":
+            l1_distance(
+                X_a,
+                X_b,
+            ),
+
+        "l2_distance":
+            l2_distance(
+                X_a,
+                X_b,
+            ),
+
+        "spearman_rank_correlation":
+            rank_correlation(
+                X_a,
+                X_b,
+            ),
+    }
