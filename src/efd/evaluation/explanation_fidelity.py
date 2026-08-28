@@ -6,6 +6,31 @@ import numpy as np
 import pandas as pd
 
 
+def score_samples_with_feature_names(
+    model,
+    x: np.ndarray,
+) -> np.ndarray:
+    """Score arrays using names recorded when the model was fitted."""
+
+    x_array = np.asarray(
+        x,
+        dtype=float,
+    )
+
+    if hasattr(model, "feature_names_in_"):
+        if x_array.ndim == 1:
+            x_array = x_array.reshape(1, -1)
+
+        x_input = pd.DataFrame(
+            x_array,
+            columns=model.feature_names_in_,
+        )
+    else:
+        x_input = x_array
+
+    return model.score_samples(x_input)
+
+
 @dataclass
 class FidelityResult:
     """
@@ -111,8 +136,9 @@ def evaluate_local_fidelity(
     )
 
     baseline_score = float(
-        model.score_samples(
-            x.reshape(1, -1)
+        score_samples_with_feature_names(
+            model,
+            x.reshape(1, -1),
         )[0]
     )
 
@@ -123,8 +149,9 @@ def evaluate_local_fidelity(
     )
 
     perturbed_score = float(
-        model.score_samples(
-            x_perturbed.reshape(1, -1)
+        score_samples_with_feature_names(
+            model,
+            x_perturbed.reshape(1, -1),
         )[0]
     )
 
@@ -244,8 +271,9 @@ def evaluate_random_fidelity_matrix(
     ):
 
         baseline_score = float(
-            model.score_samples(
-                x.reshape(1, -1)
+            score_samples_with_feature_names(
+                model,
+                x.reshape(1, -1),
             )[0]
         )
 
@@ -272,8 +300,9 @@ def evaluate_random_fidelity_matrix(
             ]
 
             perturbed_score = float(
-                model.score_samples(
-                    perturbed.reshape(1, -1)
+                score_samples_with_feature_names(
+                    model,
+                    perturbed.reshape(1, -1),
                 )[0]
             )
 

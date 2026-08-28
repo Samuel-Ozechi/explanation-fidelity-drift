@@ -785,7 +785,7 @@ def run_experiment(
 
             explanation = explain.explain(
                 X_sample[i],
-                sample_index=i,
+                sample_index=sample_indices[i],
             )
 
             explanations.append(
