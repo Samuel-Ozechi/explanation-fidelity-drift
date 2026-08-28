@@ -1,0 +1,2 @@
+window,n_k_values,fidelity_monotonic_with_k,fidelity_k_spearman,fidelity_mass_spearman,minimum_fidelity,maximum_fidelity
+1,5,True,0.9999999999999999,0.9999999999999999,0.010429643352563,0.0886006444872676

@@ -1,10 +1,8 @@
-# scripts/evaluate_exiffi_fidelity_drift_relationship.py
-
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -29,13 +27,12 @@ CLASS_DRIFT_FILE = (
     "static_if_exiffi_temporal_class_drift_significance.csv"
 )
 
-FIDELITY_OBSERVATION_FILE = (
-    "static_if_exiffi_fidelity_metric_sufficiency_observation.csv"
-)
-
 DEFAULT_BOOTSTRAP = 2000
 DEFAULT_RANDOM_STATE = 42
-DEFAULT_ALPHA = 0.05
+
+FIDELITY_METRIC = (
+    "exiffi_mean_relative_score_change"
+)
 
 DRIFT_METRICS = [
     "js_divergence",
@@ -45,27 +42,28 @@ DRIFT_METRICS = [
     "spearman_rank_correlation",
 ]
 
-FIDELITY_METRIC = (
-    "exiffi_mean_relative_score_change"
-)
-
 
 # ============================================================
-# Utility
+# Statistical utilities
 # ============================================================
-
 
 def safe_spearman(
     x: np.ndarray,
     y: np.ndarray,
 ) -> float:
 
+    if len(x) < 2:
+        return np.nan
+
+    if np.std(x) == 0 or np.std(y) == 0:
+        return np.nan
+
     result = spearmanr(x, y)
 
     value = result.statistic
 
     if np.isnan(value):
-        return 0.0
+        return np.nan
 
     return float(value)
 
@@ -75,18 +73,18 @@ def safe_pearson(
     y: np.ndarray,
 ) -> float:
 
-    if (
-        np.std(x) == 0
-        or np.std(y) == 0
-    ):
-        return 0.0
+    if len(x) < 2:
+        return np.nan
+
+    if np.std(x) == 0 or np.std(y) == 0:
+        return np.nan
 
     result = pearsonr(x, y)
 
     value = result.statistic
 
     if np.isnan(value):
-        return 0.0
+        return np.nan
 
     return float(value)
 
@@ -95,19 +93,13 @@ def safe_pearson(
 # Bootstrap correlation
 # ============================================================
 
-
 def bootstrap_correlation(
     x: np.ndarray,
     y: np.ndarray,
     method: str,
     n_bootstrap: int,
     rng: np.random.Generator,
-) -> Tuple[
-    float,
-    float,
-    float,
-    float,
-]:
+) -> Tuple[float, float, float, float]:
 
     observed = (
         safe_spearman(x, y)
@@ -115,9 +107,17 @@ def bootstrap_correlation(
         else safe_pearson(x, y)
     )
 
+    if np.isnan(observed):
+        return (
+            np.nan,
+            np.nan,
+            np.nan,
+            np.nan,
+        )
+
     n = len(x)
 
-    values = []
+    values: List[float] = []
 
     for _ in range(n_bootstrap):
 
@@ -141,22 +141,33 @@ def bootstrap_correlation(
                 yb,
             )
 
-        values.append(value)
+        if not np.isnan(value):
+            values.append(value)
+
+    if not values:
+        return (
+            observed,
+            np.nan,
+            np.nan,
+            np.nan,
+        )
 
     values = np.asarray(values)
 
-    lower = np.percentile(
-        values,
-        2.5,
+    lower = float(
+        np.percentile(
+            values,
+            2.5,
+        )
     )
 
-    upper = np.percentile(
-        values,
-        97.5,
+    upper = float(
+        np.percentile(
+            values,
+            97.5,
+        )
     )
 
-    # Two-sided bootstrap probability
-    # that correlation crosses zero.
     if observed >= 0:
 
         p_value = (
@@ -182,16 +193,15 @@ def bootstrap_correlation(
 
     return (
         float(observed),
-        float(lower),
-        float(upper),
+        lower,
+        upper,
         p_value,
     )
 
 
 # ============================================================
-# Load fidelity results
+# Loading
 # ============================================================
-
 
 def load_fidelity_summary(
     results_dir: Path,
@@ -205,7 +215,8 @@ def load_fidelity_summary(
     if not path.exists():
 
         raise FileNotFoundError(
-            f"Missing fidelity summary:\n{path}\n\n"
+            f"Missing fidelity summary:\n"
+            f"{path}\n\n"
             "Run E4.2-T04 first."
         )
 
@@ -219,9 +230,9 @@ def load_fidelity_summary(
     ]
 
     missing = [
-        c
-        for c in required
-        if c not in df.columns
+        column
+        for column in required
+        if column not in df.columns
     ]
 
     if missing:
@@ -232,11 +243,6 @@ def load_fidelity_summary(
         )
 
     return df
-
-
-# ============================================================
-# Load temporal drift
-# ============================================================
 
 
 def load_drift_summary(
@@ -251,8 +257,10 @@ def load_drift_summary(
     if not path.exists():
 
         raise FileNotFoundError(
-            f"Missing temporal drift summary:\n{path}\n\n"
-            "Run the temporal ExIFFI drift analysis first."
+            f"Missing temporal drift summary:\n"
+            f"{path}\n\n"
+            "Run the temporal ExIFFI drift "
+            "analysis first."
         )
 
     df = pd.read_csv(path)
@@ -265,9 +273,9 @@ def load_drift_summary(
     ]
 
     missing = [
-        c
-        for c in required
-        if c not in df.columns
+        column
+        for column in required
+        if column not in df.columns
     ]
 
     if missing:
@@ -281,81 +289,42 @@ def load_drift_summary(
 
 
 # ============================================================
-# Load class drift
+# Fidelity preparation
 # ============================================================
 
-
-def load_class_drift(
-    results_dir: Path,
-) -> pd.DataFrame:
-
-    path = (
-        results_dir
-        / CLASS_DRIFT_FILE
-    )
-
-    if not path.exists():
-
-        print(
-            "\nWarning: class-specific drift "
-            "file was not found."
-        )
-
-        return pd.DataFrame()
-
-    df = pd.read_csv(path)
-
-    return df
-
-
-# ============================================================
-# Build temporal fidelity values
-# ============================================================
-
-
-def build_temporal_fidelity(
+def prepare_fidelity_dataframe(
     fidelity_df: pd.DataFrame,
 ) -> pd.DataFrame:
 
-    # E4.2-T04 currently evaluates Window 1.
-    #
-    # Therefore we need to explicitly preserve the
-    # evaluated window rather than silently pretending
-    # that fidelity was measured for every window.
-
-    fidelity = (
-        fidelity_df[
-            [
-                "window",
-                "top_k",
-                "mean_top_k_mass",
-                FIDELITY_METRIC,
-            ]
+    result = fidelity_df[
+        [
+            "window",
+            "top_k",
+            "mean_top_k_mass",
+            FIDELITY_METRIC,
         ]
-        .copy()
-    )
+    ].copy()
 
-    fidelity = fidelity.rename(
+    result = result.rename(
         columns={
             FIDELITY_METRIC:
                 "fidelity_score_change"
         }
     )
 
-    return fidelity
+    return result
 
 
 # ============================================================
-# Determine fidelity/drift pairing
+# Pairwise fidelity-drift dataset
 # ============================================================
-
 
 def build_pairwise_dataset(
     fidelity_df: pd.DataFrame,
     drift_df: pd.DataFrame,
 ) -> pd.DataFrame:
 
-    fidelity = build_temporal_fidelity(
+    fidelity = prepare_fidelity_dataframe(
         fidelity_df
     )
 
@@ -371,44 +340,32 @@ def build_pairwise_dataset(
             drift_row["window_b"]
         )
 
-        comparison = drift_row[
-            "comparison"
-        ]
-
-        # Fidelity is currently available
-        # for Window 1 only from E4.2-T04.
-        #
-        # For a temporal comparison, the most
-        # conservative representation is to associate
-        # the drift comparison with the fidelity measured
-        # at its starting window.
-        #
-        # If both windows are available in a future
-        # extension, the code below can use the mean
-        # fidelity across the two windows.
+        comparison = str(
+            drift_row["comparison"]
+        )
 
         candidates = fidelity[
             fidelity["window"].isin(
-                [window_a, window_b]
+                [
+                    window_a,
+                    window_b,
+                ]
             )
         ]
 
         if candidates.empty:
             continue
 
-        # Prefer fidelity at the start of the
-        # temporal comparison.
+        # Prefer the fidelity measured at the
+        # beginning of the temporal interval.
         start_values = candidates[
             candidates["window"]
             == window_a
         ]
 
         if not start_values.empty:
-
             selected = start_values
-
         else:
-
             selected = candidates
 
         for _, fidelity_row in selected.iterrows():
@@ -420,18 +377,16 @@ def build_pairwise_dataset(
                 "top_k": int(
                     fidelity_row["top_k"]
                 ),
-                "mean_top_k_mass":
-                    float(
-                        fidelity_row[
-                            "mean_top_k_mass"
-                        ]
-                    ),
-                "fidelity_score_change":
-                    float(
-                        fidelity_row[
-                            "fidelity_score_change"
-                        ]
-                    ),
+                "mean_top_k_mass": float(
+                    fidelity_row[
+                        "mean_top_k_mass"
+                    ]
+                ),
+                "fidelity_score_change": float(
+                    fidelity_row[
+                        "fidelity_score_change"
+                    ]
+                ),
             }
 
             for metric in DRIFT_METRICS:
@@ -446,18 +401,21 @@ def build_pairwise_dataset(
 
 
 # ============================================================
-# Fidelity change by k
+# Fidelity vs Top-K relationship
 # ============================================================
-
 
 def calculate_fidelity_k_relationship(
     fidelity_df: pd.DataFrame,
 ) -> pd.DataFrame:
 
+    fidelity = prepare_fidelity_dataframe(
+        fidelity_df
+    )
+
     rows = []
 
     for window, group in (
-        fidelity_df.groupby("window")
+        fidelity.groupby("window")
     ):
 
         group = (
@@ -471,30 +429,39 @@ def calculate_fidelity_k_relationship(
 
         k = group[
             "top_k"
-        ].to_numpy(dtype=float)
+        ].to_numpy(
+            dtype=float
+        )
 
-        fidelity = group[
+        fidelity_values = group[
             "fidelity_score_change"
-        ].to_numpy(dtype=float)
+        ].to_numpy(
+            dtype=float
+        )
 
         mass = group[
             "mean_top_k_mass"
-        ].to_numpy(dtype=float)
+        ].to_numpy(
+            dtype=float
+        )
 
         spearman_k = safe_spearman(
             k,
-            fidelity,
+            fidelity_values,
         )
 
         spearman_mass = safe_spearman(
             mass,
-            fidelity,
+            fidelity_values,
+        )
+
+        differences = np.diff(
+            fidelity_values
         )
 
         monotonic = bool(
             np.all(
-                np.diff(fidelity)
-                >= -1e-12
+                differences >= -1e-12
             )
         )
 
@@ -510,11 +477,15 @@ def calculate_fidelity_k_relationship(
                     spearman_mass,
                 "minimum_fidelity":
                     float(
-                        np.min(fidelity)
+                        np.min(
+                            fidelity_values
+                        )
                     ),
                 "maximum_fidelity":
                     float(
-                        np.max(fidelity)
+                        np.max(
+                            fidelity_values
+                        )
                     ),
             }
         )
@@ -525,7 +496,6 @@ def calculate_fidelity_k_relationship(
 # ============================================================
 # Correlation analysis
 # ============================================================
-
 
 def evaluate_correlations(
     pairwise_df: pd.DataFrame,
@@ -539,31 +509,77 @@ def evaluate_correlations(
     correlation_rows = []
     bootstrap_rows = []
 
+    if pairwise_df.empty:
+        return (
+            pd.DataFrame(),
+            pd.DataFrame(),
+        )
+
+    # Important:
+    #
+    # We require at least 3 independent temporal
+    # observations before calculating a correlation.
+    #
+    # At the current stage E4.2-T04 only provides
+    # Window 1 fidelity. Therefore we should NOT
+    # fabricate a correlation from repeated Top-K
+    # values within the same temporal comparison.
+
     for top_k, group in (
         pairwise_df.groupby("top_k")
     ):
 
-        if len(group) < 3:
+        unique_comparisons = (
+            group[
+                "comparison"
+            ].nunique()
+        )
+
+        if unique_comparisons < 3:
             continue
 
         fidelity = group[
             "fidelity_score_change"
-        ].to_numpy(dtype=float)
+        ].to_numpy(
+            dtype=float
+        )
 
         for metric in DRIFT_METRICS:
 
             drift = group[
                 metric
-            ].to_numpy(dtype=float)
+            ].to_numpy(
+                dtype=float
+            )
+
+            valid = (
+                np.isfinite(fidelity)
+                &
+                np.isfinite(drift)
+            )
+
+            fidelity_valid = (
+                fidelity[valid]
+            )
+
+            drift_valid = (
+                drift[valid]
+            )
+
+            if len(
+                fidelity_valid
+            ) < 3:
+
+                continue
 
             pearson = safe_pearson(
-                fidelity,
-                drift,
+                fidelity_valid,
+                drift_valid,
             )
 
             spearman = safe_spearman(
-                fidelity,
-                drift,
+                fidelity_valid,
+                drift_valid,
             )
 
             correlation_rows.append(
@@ -571,7 +587,11 @@ def evaluate_correlations(
                     "top_k": int(top_k),
                     "drift_metric": metric,
                     "n_observations":
-                        len(group),
+                        len(
+                            fidelity_valid
+                        ),
+                    "n_temporal_comparisons":
+                        unique_comparisons,
                     "pearson_correlation":
                         pearson,
                     "spearman_correlation":
@@ -579,84 +599,61 @@ def evaluate_correlations(
                 }
             )
 
-            # Bootstrap Spearman.
-            (
-                observed,
-                lower,
-                upper,
-                p_value,
-            ) = bootstrap_correlation(
-                x=fidelity,
-                y=drift,
-                method="spearman",
-                n_bootstrap=n_bootstrap,
-                rng=rng,
-            )
+            for method in [
+                "spearman",
+                "pearson",
+            ]:
 
-            bootstrap_rows.append(
-                {
-                    "top_k": int(top_k),
-                    "drift_metric": metric,
-                    "method": "spearman",
-                    "observed_correlation":
-                        observed,
-                    "bootstrap_ci_lower":
-                        lower,
-                    "bootstrap_ci_upper":
-                        upper,
-                    "bootstrap_pvalue":
-                        p_value,
-                    "n_observations":
-                        len(group),
-                    "n_bootstrap":
-                        n_bootstrap,
-                }
-            )
+                (
+                    observed,
+                    lower,
+                    upper,
+                    p_value,
+                ) = bootstrap_correlation(
+                    x=fidelity_valid,
+                    y=drift_valid,
+                    method=method,
+                    n_bootstrap=n_bootstrap,
+                    rng=rng,
+                )
 
-            # Bootstrap Pearson.
-            (
-                observed,
-                lower,
-                upper,
-                p_value,
-            ) = bootstrap_correlation(
-                x=fidelity,
-                y=drift,
-                method="pearson",
-                n_bootstrap=n_bootstrap,
-                rng=rng,
-            )
-
-            bootstrap_rows.append(
-                {
-                    "top_k": int(top_k),
-                    "drift_metric": metric,
-                    "method": "pearson",
-                    "observed_correlation":
-                        observed,
-                    "bootstrap_ci_lower":
-                        lower,
-                    "bootstrap_ci_upper":
-                        upper,
-                    "bootstrap_pvalue":
-                        p_value,
-                    "n_observations":
-                        len(group),
-                    "n_bootstrap":
-                        n_bootstrap,
-                }
-            )
+                bootstrap_rows.append(
+                    {
+                        "top_k": int(top_k),
+                        "drift_metric": metric,
+                        "method": method,
+                        "observed_correlation":
+                            observed,
+                        "bootstrap_ci_lower":
+                            lower,
+                        "bootstrap_ci_upper":
+                            upper,
+                        "bootstrap_pvalue":
+                            p_value,
+                        "n_observations":
+                            len(
+                                fidelity_valid
+                            ),
+                        "n_temporal_comparisons":
+                            unique_comparisons,
+                        "n_bootstrap":
+                            n_bootstrap,
+                    }
+                )
 
     return (
-        pd.DataFrame(correlation_rows),
-        pd.DataFrame(bootstrap_rows),
+        pd.DataFrame(
+            correlation_rows
+        ),
+        pd.DataFrame(
+            bootstrap_rows
+        ),
     )
 
 
 # ============================================================
-# Decision logic
+# Decision
 # ============================================================
-
 
 def build_decision(
     pairwise_df: pd.DataFrame,
@@ -664,44 +661,22 @@ def build_decision(
     fidelity_k_df: pd.DataFrame,
 ) -> pd.DataFrame:
 
-    if pairwise_df.empty:
+    temporal_comparisons = 0
 
-        return pd.DataFrame(
-            [
-                {
-                    "decision":
-                        "INSUFFICIENT_TEMPORAL_FIDELITY_DATA",
-                    "evidence":
-                        "Fidelity has not yet been evaluated "
-                        "for enough temporal windows to establish "
-                        "a fidelity-drift relationship.",
-                }
-            ]
+    if not pairwise_df.empty:
+
+        temporal_comparisons = (
+            pairwise_df[
+                "comparison"
+            ].nunique()
         )
 
-    n_comparisons = (
-        pairwise_df[
-            [
-                "comparison",
-                "top_k",
-            ]
-        ]
-        .drop_duplicates()
-        .shape[0]
-    )
+    # --------------------------------------------------------
+    # Current evidence is insufficient if fidelity exists
+    # for fewer than 3 temporal comparisons.
+    # --------------------------------------------------------
 
-    # A genuine temporal relationship requires
-    # more than one independent temporal comparison.
-    #
-    # E4.2-T04 currently gives Window 1 fidelity only,
-    # so this condition will normally fail at this stage.
-    temporal_comparisons = (
-        pairwise_df[
-            "comparison"
-        ].nunique()
-    )
-
-    if temporal_comparisons < 2:
+    if temporal_comparisons < 3:
 
         return pd.DataFrame(
             [
@@ -712,44 +687,75 @@ def build_decision(
                         temporal_comparisons,
                     "n_pairwise_records":
                         len(pairwise_df),
+                    "significant_bootstrap_associations":
+                        0,
+                    "tested_bootstrap_associations":
+                        0,
+                    "fidelity_monotonic_with_k":
+                        (
+                            bool(
+                                fidelity_k_df[
+                                    "fidelity_monotonic_with_k"
+                                ].all()
+                            )
+                            if not fidelity_k_df.empty
+                            else False
+                        ),
                     "evidence":
                         (
-                            "E4.2-T04 has validated the fidelity "
-                            "metric, but fidelity has not yet been "
-                            "measured independently across enough "
-                            "temporal windows to test the "
-                            "fidelity-drift relationship."
+                            "E4.2-T04 successfully validated "
+                            "the fidelity metric, but fidelity "
+                            "has not yet been measured across "
+                            "enough independent temporal windows "
+                            "to test a fidelity-drift relationship."
                         ),
                     "recommendation":
                         (
-                            "Extend the validated fidelity "
-                            "evaluation to Windows 2–4 before "
-                            "drawing a temporal fidelity-drift "
-                            "conclusion."
+                            "Extend E4.2-T04 to Windows 2, 3 "
+                            "and 4 using the same validated "
+                            "procedure before performing the "
+                            "temporal fidelity-drift analysis."
                         ),
                 }
             ]
         )
 
+    # --------------------------------------------------------
+    # Evaluate statistical evidence.
+    # --------------------------------------------------------
+
     significant = 0
-    total = 0
+    tested = 0
 
-    for _, row in bootstrap_df.iterrows():
+    if not bootstrap_df.empty:
 
-        if row[
-            "method"
-        ] != "spearman":
+        spearman_df = bootstrap_df[
+            bootstrap_df["method"]
+            == "spearman"
+        ]
 
-            continue
+        for _, row in spearman_df.iterrows():
 
-        total += 1
+            tested += 1
 
-        if (
-            row["bootstrap_ci_lower"] > 0
-            or
-            row["bootstrap_ci_upper"] < 0
-        ):
-            significant += 1
+            lower = row[
+                "bootstrap_ci_lower"
+            ]
+
+            upper = row[
+                "bootstrap_ci_upper"
+            ]
+
+            if (
+                np.isfinite(lower)
+                and np.isfinite(upper)
+                and (
+                    lower > 0
+                    or upper < 0
+                )
+            ):
+
+                significant += 1
 
     monotonic = False
 
@@ -762,7 +768,7 @@ def build_decision(
         )
 
     if (
-        total > 0
+        tested > 0
         and significant > 0
         and monotonic
     ):
@@ -772,11 +778,9 @@ def build_decision(
         )
 
         evidence = (
-            "The validated fidelity metric demonstrates "
-            "a statistically supported association with "
-            "temporal explanation drift while preserving "
-            "monotonic fidelity behaviour across tested "
-            "Top-K values."
+            "The validated fidelity metric shows "
+            "a statistically supported association "
+            "with temporal explanation drift."
         )
 
     else:
@@ -786,9 +790,9 @@ def build_decision(
         )
 
         evidence = (
-            "The available temporal evidence is insufficient "
-            "to establish a statistically supported relationship "
-            "between explanation fidelity and temporal drift."
+            "The available temporal evidence does not "
+            "provide sufficient statistical support for "
+            "a fidelity-drift relationship."
         )
 
     return pd.DataFrame(
@@ -802,10 +806,17 @@ def build_decision(
                 "significant_bootstrap_associations":
                     significant,
                 "tested_bootstrap_associations":
-                    total,
+                    tested,
                 "fidelity_monotonic_with_k":
                     monotonic,
                 "evidence": evidence,
+                "recommendation":
+                    (
+                        "Proceed to interpretation "
+                        "only if the relationship is "
+                        "supported across independent "
+                        "temporal comparisons."
+                    ),
             }
         ]
     )
@@ -815,7 +826,6 @@ def build_decision(
 # Main experiment
 # ============================================================
 
-
 def run_experiment(
     results_dir: Path = DEFAULT_RESULTS_DIR,
     n_bootstrap: int = DEFAULT_BOOTSTRAP,
@@ -823,9 +833,11 @@ def run_experiment(
 ):
 
     print("=" * 70)
+
     print(
         "E4.2-T05 — EXIFFI FIDELITY–DRIFT RELATIONSHIP"
     )
+
     print("=" * 70)
 
     print(
@@ -848,9 +860,9 @@ def run_experiment(
         random_state
     )
 
-    # ---------------------------------------------------------
-    # 1. Load fidelity
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # 1. Fidelity
+    # --------------------------------------------------------
 
     print(
         "\n[1/7] Loading validated fidelity results..."
@@ -875,9 +887,9 @@ def run_experiment(
         ),
     )
 
-    # ---------------------------------------------------------
-    # 2. Load drift
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # 2. Drift
+    # --------------------------------------------------------
 
     print(
         "\n[2/7] Loading temporal drift results..."
@@ -899,9 +911,9 @@ def run_experiment(
         ].tolist(),
     )
 
-    # ---------------------------------------------------------
-    # 3. Build pairwise data
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # 3. Pairing
+    # --------------------------------------------------------
 
     print(
         "\n[3/7] Constructing fidelity–drift dataset..."
@@ -915,8 +927,7 @@ def run_experiment(
     if pairwise_df.empty:
 
         print(
-            "No valid fidelity–drift pairs "
-            "could be constructed."
+            "No valid fidelity–drift pairs found."
         )
 
     else:
@@ -943,9 +954,9 @@ def run_experiment(
             ].nunique(),
         )
 
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
     # 4. Correlations
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
 
     print(
         "\n[4/7] Evaluating fidelity–drift associations..."
@@ -960,9 +971,20 @@ def run_experiment(
         rng=rng,
     )
 
-    # ---------------------------------------------------------
+    if correlation_df.empty:
+
+        print(
+            "  Correlations not estimable."
+        )
+
+        print(
+            "  Reason: fewer than 3 independent "
+            "temporal comparisons have fidelity data."
+        )
+
+    # --------------------------------------------------------
     # 5. Fidelity behaviour
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
 
     print(
         "\n[5/7] Evaluating fidelity behaviour..."
@@ -974,9 +996,9 @@ def run_experiment(
         )
     )
 
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
     # 6. Decision
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
 
     print(
         "\n[6/7] Assessing temporal evidence..."
@@ -988,9 +1010,9 @@ def run_experiment(
         fidelity_k_df=fidelity_k_df,
     )
 
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
     # 7. Save
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
 
     print(
         "\n[7/7] Saving fidelity–drift results..."
@@ -1080,9 +1102,9 @@ def run_experiment(
         f"    {decision_path}"
     )
 
-    # ---------------------------------------------------------
-    # Display
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # Summary
+    # --------------------------------------------------------
 
     print(
         "\n"
@@ -1097,27 +1119,23 @@ def run_experiment(
         "=" * 70
     )
 
-    if not correlation_df.empty:
+    print(
+        "\nCorrelation analysis:"
+    )
+
+    if correlation_df.empty:
 
         print(
-            "\nCorrelation analysis:"
-        )
-
-        print(
-            correlation_df.to_string(
-                index=False
-            )
+            "  Not estimable with the current "
+            "temporal fidelity coverage."
         )
 
     else:
 
         print(
-            "\nCorrelation analysis:"
-        )
-
-        print(
-            "Not estimable with the current "
-            "temporal fidelity coverage."
+            correlation_df.to_string(
+                index=False
+            )
         )
 
     print(
@@ -1127,7 +1145,7 @@ def run_experiment(
     if fidelity_k_df.empty:
 
         print(
-            "Not available."
+            "  Not available."
         )
 
     else:
@@ -1174,7 +1192,6 @@ def run_experiment(
 # CLI
 # ============================================================
 
-
 def main():
 
     parser = argparse.ArgumentParser(
@@ -1191,8 +1208,8 @@ def main():
             DEFAULT_RESULTS_DIR
         ),
         help=(
-            "Directory containing previously "
-            "generated experimental results."
+            "Directory containing generated "
+            "experimental results."
         ),
     )
 

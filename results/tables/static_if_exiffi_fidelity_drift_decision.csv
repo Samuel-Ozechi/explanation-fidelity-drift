@@ -1,0 +1,2 @@
+decision,temporal_comparisons,n_pairwise_records,significant_bootstrap_associations,tested_bootstrap_associations,fidelity_monotonic_with_k,evidence,recommendation
+TEMPORAL_FIDELITY_EXTENSION_REQUIRED,1,5,0,0,True,"E4.2-T04 successfully validated the fidelity metric, but fidelity has not yet been measured across enough independent temporal windows to test a fidelity-drift relationship.","Extend E4.2-T04 to Windows 2, 3 and 4 using the same validated procedure before performing the temporal fidelity-drift analysis."
