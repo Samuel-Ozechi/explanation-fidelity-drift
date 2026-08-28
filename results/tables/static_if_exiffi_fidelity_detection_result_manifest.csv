@@ -1,0 +1,10 @@
+artifact,path,category,status,purpose
+static_if_exiffi_temporal_fidelity_detection_trajectory.csv,results/tables/static_if_exiffi_temporal_fidelity_detection_trajectory.csv,E5.3 temporal fidelity-vs-detection,generated,Research evidence artifact for temporal explanation-fidelity analysis.
+static_if_temporal_detection_trajectory.csv,results/tables/static_if_temporal_detection_trajectory.csv,E5.3 temporal fidelity-vs-detection,generated,Research evidence artifact for temporal explanation-fidelity analysis.
+static_if_exiffi_fidelity_detection_dissociation.csv,results/tables/static_if_exiffi_fidelity_detection_dissociation.csv,E5.3 temporal fidelity-vs-detection,generated,Research evidence artifact for temporal explanation-fidelity analysis.
+static_if_exiffi_fidelity_drift_index.csv,results/tables/static_if_exiffi_fidelity_drift_index.csv,E5.3 temporal fidelity-vs-detection,generated,Research evidence artifact for temporal explanation-fidelity analysis.
+static_if_exiffi_fidelity_detection_slopes.csv,results/tables/static_if_exiffi_fidelity_detection_slopes.csv,E5.3 temporal fidelity-vs-detection,generated,Research evidence artifact for temporal explanation-fidelity analysis.
+static_if_exiffi_fidelity_detection_correlations.csv,results/tables/static_if_exiffi_fidelity_detection_correlations.csv,E5.3 temporal fidelity-vs-detection,generated,Research evidence artifact for temporal explanation-fidelity analysis.
+static_if_exiffi_fidelity_detection_summary.csv,results/tables/static_if_exiffi_fidelity_detection_summary.csv,E5.3 temporal fidelity-vs-detection,generated,Research evidence artifact for temporal explanation-fidelity analysis.
+static_if_exiffi_fidelity_detection_interpretation.csv,results/tables/static_if_exiffi_fidelity_detection_interpretation.csv,E5.3 temporal fidelity-vs-detection,generated,Research evidence artifact for temporal explanation-fidelity analysis.
+static_if_exiffi_class_fidelity_temporal_analysis.csv,results/tables/static_if_exiffi_class_fidelity_temporal_analysis.csv,E5.3 temporal fidelity-vs-detection,generated,Research evidence artifact for temporal explanation-fidelity analysis.
