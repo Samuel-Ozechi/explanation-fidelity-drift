@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.distance import cosine
 from scipy.stats import spearmanr
+from scipy.stats import false_discovery_control
 
 
 # ============================================================
@@ -24,6 +25,8 @@ TOP_K_VALUES = [1, 5, 10, 20]
 DEFAULT_N_BOOTSTRAP = 1000
 DEFAULT_N_PERMUTATIONS = 1000
 DEFAULT_RANDOM_STATE = 42
+
+ALPHA = 0.05
 
 
 # ============================================================
@@ -87,10 +90,9 @@ def extract_importance_matrix(
         for c in importance_cols
     ]
 
-    X = (
-        df[importance_cols]
-        .to_numpy(dtype=float)
-    )
+    X = df[
+        importance_cols
+    ].to_numpy(dtype=float)
 
     return X, feature_names
 
@@ -157,6 +159,7 @@ def js_divergence(
     m = 0.5 * (p + q)
 
     def kl(a, b):
+
         mask = a > 0
 
         return np.sum(
@@ -253,7 +256,9 @@ def top_k_features(
         distribution
     )[::-1][:k]
 
-    return set(indices.tolist())
+    return set(
+        indices.tolist()
+    )
 
 
 def jaccard_similarity(
@@ -323,14 +328,30 @@ def bootstrap_drift(
     metric: str,
     n_bootstrap: int,
     rng: np.random.Generator,
-) -> Tuple[float, float, float]:
+) -> Tuple[
+    float,
+    float,
+    float,
+    float,
+    float,
+]:
 
     n_a = len(X_a)
     n_b = len(X_b)
 
-    values = []
+    observed = calculate_drift(
+        X_a,
+        X_b,
+    )[metric]
 
-    for _ in range(n_bootstrap):
+    values = np.empty(
+        n_bootstrap,
+        dtype=float,
+    )
+
+    for i in range(
+        n_bootstrap
+    ):
 
         idx_a = rng.integers(
             0,
@@ -349,11 +370,9 @@ def bootstrap_drift(
             X_b[idx_b],
         )
 
-        values.append(
-            result[metric]
-        )
-
-    values = np.asarray(values)
+        values[i] = result[
+            metric
+        ]
 
     lower = np.percentile(
         values,
@@ -365,15 +384,29 @@ def bootstrap_drift(
         97.5,
     )
 
-    observed = calculate_drift(
-        X_a,
-        X_b,
-    )[metric]
+    bootstrap_mean = float(
+        np.mean(values)
+    )
+
+    bootstrap_bias = (
+        bootstrap_mean
+        - observed
+    )
+
+    # Fraction of bootstrap statistics
+    # smaller than the observed statistic.
+    percentile_position = float(
+        np.mean(
+            values <= observed
+        )
+    )
 
     return (
         float(observed),
         float(lower),
         float(upper),
+        bootstrap_bias,
+        percentile_position,
     )
 
 
@@ -404,9 +437,14 @@ def permutation_test(
 
     n_a = len(X_a)
 
-    null_values = []
+    null_values = np.empty(
+        n_permutations,
+        dtype=float,
+    )
 
-    for _ in range(n_permutations):
+    for i in range(
+        n_permutations
+    ):
 
         indices = rng.permutation(
             len(combined)
@@ -420,27 +458,18 @@ def permutation_test(
             indices[n_a:]
         ]
 
-        value = calculate_drift(
-            perm_a,
-            perm_b,
-        )[metric]
-
-        null_values.append(
-            value
+        null_values[i] = (
+            calculate_drift(
+                perm_a,
+                perm_b,
+            )[metric]
         )
 
-    null_values = np.asarray(
-        null_values
-    )
-
-    # For distances, larger values indicate
-    # greater drift.
-    #
-    # For correlation, smaller values indicate
-    # greater drift.
     if metric == "spearman_rank_correlation":
 
-        observed_drift = 1.0 - observed
+        observed_drift = (
+            1.0 - observed
+        )
 
         null_drift = (
             1.0 - null_values
@@ -458,7 +487,7 @@ def permutation_test(
         )
         + 1
     ) / (
-        len(null_drift)
+        n_permutations
         + 1
     )
 
@@ -496,14 +525,18 @@ def evaluate_comparison(
 
     for metric in metrics:
 
-        observed, ci_lower, ci_upper = (
-            bootstrap_drift(
-                X_a=X_a,
-                X_b=X_b,
-                metric=metric,
-                n_bootstrap=n_bootstrap,
-                rng=rng,
-            )
+        (
+            observed,
+            ci_lower,
+            ci_upper,
+            bootstrap_bias,
+            percentile_position,
+        ) = bootstrap_drift(
+            X_a=X_a,
+            X_b=X_b,
+            metric=metric,
+            n_bootstrap=n_bootstrap,
+            rng=rng,
         )
 
         _, p_value = permutation_test(
@@ -516,22 +549,58 @@ def evaluate_comparison(
 
         rows.append(
             {
-                "comparison": (
-                    f"w{window_a}_w{window_b}"
-                ),
-                "window_a": window_a,
-                "window_b": window_b,
-                "condition": condition,
-                "metric": metric,
-                "observed_value": observed,
-                "bootstrap_ci_lower": ci_lower,
-                "bootstrap_ci_upper": ci_upper,
-                "permutation_pvalue": p_value,
-                "n_observations_a": len(X_a),
-                "n_observations_b": len(X_b),
-                "n_features": X_a.shape[1],
-                "n_bootstrap": n_bootstrap,
-                "n_permutations": n_permutations,
+                "comparison":
+                    f"w{window_a}_w{window_b}",
+
+                "window_a":
+                    window_a,
+
+                "window_b":
+                    window_b,
+
+                "condition":
+                    condition,
+
+                "metric":
+                    metric,
+
+                "observed_value":
+                    observed,
+
+                "bootstrap_ci_lower":
+                    ci_lower,
+
+                "bootstrap_ci_upper":
+                    ci_upper,
+
+                "bootstrap_mean":
+                    np.nan
+                    if np.isnan(bootstrap_bias)
+                    else observed + bootstrap_bias,
+
+                "bootstrap_bias":
+                    bootstrap_bias,
+
+                "bootstrap_percentile_position":
+                    percentile_position,
+
+                "permutation_pvalue":
+                    p_value,
+
+                "n_observations_a":
+                    len(X_a),
+
+                "n_observations_b":
+                    len(X_b),
+
+                "n_features":
+                    X_a.shape[1],
+
+                "n_bootstrap":
+                    n_bootstrap,
+
+                "n_permutations":
+                    n_permutations,
             }
         )
 
@@ -562,6 +631,15 @@ def evaluate_top_k(
 
     rows = []
 
+    combined = np.vstack(
+        [
+            X_a,
+            X_b,
+        ]
+    )
+
+    n_a = len(X_a)
+
     for k in TOP_K_VALUES:
 
         observed = jaccard_similarity(
@@ -569,18 +647,12 @@ def evaluate_top_k(
             top_k_features(q, k),
         )
 
-        combined = np.vstack(
-            [
-                X_a,
-                X_b,
-            ]
+        null_values = np.empty(
+            n_permutations,
+            dtype=float,
         )
 
-        n_a = len(X_a)
-
-        null_values = []
-
-        for _ in range(
+        for i in range(
             n_permutations
         ):
 
@@ -608,26 +680,19 @@ def evaluate_top_k(
                 )
             )
 
-            value = jaccard_similarity(
-                top_k_features(
-                    p_perm,
-                    k,
-                ),
-                top_k_features(
-                    q_perm,
-                    k,
-                ),
+            null_values[i] = (
+                jaccard_similarity(
+                    top_k_features(
+                        p_perm,
+                        k,
+                    ),
+                    top_k_features(
+                        q_perm,
+                        k,
+                    ),
+                )
             )
 
-            null_values.append(
-                value
-            )
-
-        null_values = np.asarray(
-            null_values
-        )
-
-        # Lower Jaccard means greater instability.
         observed_instability = (
             1.0 - observed
         )
@@ -643,31 +708,44 @@ def evaluate_top_k(
             )
             + 1
         ) / (
-            len(null_instability)
+            n_permutations
             + 1
         )
 
         rows.append(
             {
-                "comparison": (
-                    f"w{window_a}_w{window_b}"
-                ),
-                "window_a": window_a,
-                "window_b": window_b,
-                "top_k": k,
-                "observed_jaccard": observed,
-                "observed_instability": (
-                    observed_instability
-                ),
-                "permutation_pvalue": (
-                    float(p_value)
-                ),
-                "n_observations_a": len(X_a),
-                "n_observations_b": len(X_b),
-                "n_features": X_a.shape[1],
-                "n_permutations": (
-                    n_permutations
-                ),
+                "comparison":
+                    f"w{window_a}_w{window_b}",
+
+                "window_a":
+                    window_a,
+
+                "window_b":
+                    window_b,
+
+                "top_k":
+                    k,
+
+                "observed_jaccard":
+                    observed,
+
+                "observed_instability":
+                    observed_instability,
+
+                "permutation_pvalue":
+                    float(p_value),
+
+                "n_observations_a":
+                    len(X_a),
+
+                "n_observations_b":
+                    len(X_b),
+
+                "n_features":
+                    X_a.shape[1],
+
+                "n_permutations":
+                    n_permutations,
             }
         )
 
@@ -689,11 +767,13 @@ def evaluate_class_comparisons(
 
     rows = []
 
-    for window_a, window_b in [
+    comparisons = [
         (1, 2),
         (2, 3),
         (3, 4),
-    ]:
+    ]
+
+    for window_a, window_b in comparisons:
 
         for fraud_value, class_name in [
             (1, "fraud"),
@@ -753,6 +833,86 @@ def evaluate_class_comparisons(
 
 
 # ============================================================
+# Multiple comparison correction
+# ============================================================
+
+
+def apply_fdr(
+    df: pd.DataFrame,
+    pvalue_column: str = "permutation_pvalue",
+    group_columns: List[str] | None = None,
+) -> pd.DataFrame:
+
+    df = df.copy()
+
+    df[
+        "fdr_adjusted_pvalue"
+    ] = np.nan
+
+    df[
+        "significant_fdr"
+    ] = False
+
+    if df.empty:
+        return df
+
+    if group_columns is None:
+
+        group_columns = []
+
+    if group_columns:
+
+        grouped = df.groupby(
+            group_columns,
+            sort=False,
+        )
+
+        for _, group in grouped:
+
+            indices = group.index
+
+            adjusted = (
+                false_discovery_control(
+                    group[
+                        pvalue_column
+                    ].to_numpy(),
+                    method="bh",
+                )
+            )
+
+            df.loc[
+                indices,
+                "fdr_adjusted_pvalue",
+            ] = adjusted
+
+    else:
+
+        adjusted = (
+            false_discovery_control(
+                df[
+                    pvalue_column
+                ].to_numpy(),
+                method="bh",
+            )
+        )
+
+        df[
+            "fdr_adjusted_pvalue"
+        ] = adjusted
+
+    df[
+        "significant_fdr"
+    ] = (
+        df[
+            "fdr_adjusted_pvalue"
+        ]
+        < ALPHA
+    )
+
+    return df
+
+
+# ============================================================
 # Main experiment
 # ============================================================
 
@@ -785,6 +945,10 @@ def run_experiment(
         f"Random state: {random_state}"
     )
 
+    print(
+        f"FDR alpha: {ALPHA}"
+    )
+
     rng = np.random.default_rng(
         random_state
     )
@@ -794,7 +958,7 @@ def run_experiment(
     # ---------------------------------------------------------
 
     print(
-        "\n[1/6] Loading temporal explanations..."
+        "\n[1/7] Loading temporal explanations..."
     )
 
     windows = {}
@@ -818,10 +982,6 @@ def run_experiment(
         matrices[window] = X
         feature_names[window] = names
 
-    # ---------------------------------------------------------
-    # Validation
-    # ---------------------------------------------------------
-
     reference_features = (
         feature_names[1]
     )
@@ -842,7 +1002,7 @@ def run_experiment(
     # ---------------------------------------------------------
 
     print(
-        "\n[2/6] Evaluating overall temporal drift..."
+        "\n[2/7] Evaluating overall temporal drift..."
     )
 
     overall_rows = []
@@ -895,7 +1055,7 @@ def run_experiment(
     # ---------------------------------------------------------
 
     print(
-        "\n[3/6] Evaluating Top-K stability..."
+        "\n[3/7] Evaluating Top-K stability..."
     )
 
     top_k_rows = []
@@ -928,7 +1088,7 @@ def run_experiment(
     # ---------------------------------------------------------
 
     print(
-        "\n[4/6] Evaluating class-specific drift..."
+        "\n[4/7] Evaluating class-specific drift..."
     )
 
     class_rows = evaluate_class_comparisons(
@@ -944,11 +1104,40 @@ def run_experiment(
     )
 
     # ---------------------------------------------------------
-    # 5. Save
+    # 5. Multiple-comparison correction
     # ---------------------------------------------------------
 
     print(
-        "\n[5/6] Saving statistical results..."
+        "\n[5/7] Applying Benjamini-Hochberg FDR correction..."
+    )
+
+    # Overall metrics:
+    # correct across all overall metric/window tests.
+    overall_df = apply_fdr(
+        overall_df,
+        group_columns=None,
+    )
+
+    # Top-K:
+    # correct across all Top-K/window tests.
+    top_k_df = apply_fdr(
+        top_k_df,
+        group_columns=None,
+    )
+
+    # Class-specific:
+    # correct across all class/metric/window tests.
+    class_df = apply_fdr(
+        class_df,
+        group_columns=None,
+    )
+
+    # ---------------------------------------------------------
+    # 6. Save
+    # ---------------------------------------------------------
+
+    print(
+        "\n[6/7] Saving statistical results..."
     )
 
     output_dir.mkdir(
@@ -971,6 +1160,11 @@ def run_experiment(
         / "static_if_exiffi_temporal_class_drift_significance.csv"
     )
 
+    diagnostics_path = (
+        output_dir
+        / "static_if_exiffi_temporal_bootstrap_diagnostics.csv"
+    )
+
     overall_df.to_csv(
         overall_path,
         index=False,
@@ -986,6 +1180,25 @@ def run_experiment(
         index=False,
     )
 
+    diagnostics_columns = [
+        "comparison",
+        "condition",
+        "metric",
+        "observed_value",
+        "bootstrap_mean",
+        "bootstrap_bias",
+        "bootstrap_percentile_position",
+        "bootstrap_ci_lower",
+        "bootstrap_ci_upper",
+    ]
+
+    overall_df[
+        diagnostics_columns
+    ].to_csv(
+        diagnostics_path,
+        index=False,
+    )
+
     print(
         f"Overall results:\n{overall_path}"
     )
@@ -998,30 +1211,35 @@ def run_experiment(
         f"Class-specific results:\n{class_path}"
     )
 
+    print(
+        f"Bootstrap diagnostics:\n"
+        f"{diagnostics_path}"
+    )
+
     # ---------------------------------------------------------
-    # 6. Summary
+    # 7. Summary
     # ---------------------------------------------------------
 
     print(
-        "\n[6/6] Statistical validation summary"
+        "\n[7/7] Statistical validation summary"
     )
 
     print(
         "\nOverall drift:"
     )
 
-    display_columns = [
-        "comparison",
-        "metric",
-        "observed_value",
-        "bootstrap_ci_lower",
-        "bootstrap_ci_upper",
-        "permutation_pvalue",
-    ]
-
     print(
         overall_df[
-            display_columns
+            [
+                "comparison",
+                "metric",
+                "observed_value",
+                "bootstrap_ci_lower",
+                "bootstrap_ci_upper",
+                "permutation_pvalue",
+                "fdr_adjusted_pvalue",
+                "significant_fdr",
+            ]
         ].to_string(
             index=False
         )
@@ -1032,7 +1250,17 @@ def run_experiment(
     )
 
     print(
-        top_k_df.to_string(
+        top_k_df[
+            [
+                "comparison",
+                "top_k",
+                "observed_jaccard",
+                "observed_instability",
+                "permutation_pvalue",
+                "fdr_adjusted_pvalue",
+                "significant_fdr",
+            ]
+        ].to_string(
             index=False
         )
     )
@@ -1048,9 +1276,9 @@ def run_experiment(
                 "condition",
                 "metric",
                 "observed_value",
-                "bootstrap_ci_lower",
-                "bootstrap_ci_upper",
                 "permutation_pvalue",
+                "fdr_adjusted_pvalue",
+                "significant_fdr",
             ]
         ].to_string(
             index=False
@@ -1088,7 +1316,10 @@ def main():
     parser = argparse.ArgumentParser(
         description=(
             "Statistically validate temporal "
-            "ExIFFI explanation drift."
+            "ExIFFI explanation drift using "
+            "bootstrap confidence intervals, "
+            "permutation testing, and "
+            "Benjamini-Hochberg FDR correction."
         )
     )
 
