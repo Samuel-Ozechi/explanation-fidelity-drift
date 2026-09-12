@@ -1,0 +1,8 @@
+finding,value
+Concept drift (P(Y|X)) after FDR correction,None significant
+Covariate shift observed,200+ features per window
+Static model fidelity decline W1→W4,-9.1%
+Retrained model fidelity decline W1→W4,-4.5%
+Static vs retrained fidelity difference (W4),-7.0%
+Detection performance decline W1→W4 (F1),-24.4%
+Detection performance decline W1→W4 (PR-AUC),-46.8%
