@@ -268,17 +268,6 @@ Decision-level fidelity is measured using a controlled feature intervention:
 3. Re-score the model on the perturbed observation.
 4. Calculate the relative score change.
 
-The metric is:
-
-\[
-\text{Relative Score Change}
-=
-\frac{|\text{score}(x')-\text{score}(x)|}
-{|\text{score}(x)|+\epsilon}
-\]
-
-where \(x\) is the original observation, \(x'\) is the perturbed observation, and \(\epsilon\) is a small constant to avoid division by zero.
-
 The primary reported value is \(k=5\).
 
 ### Statistical framework
