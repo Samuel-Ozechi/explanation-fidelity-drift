@@ -257,17 +257,6 @@ All models use the same documented hyperparameters: 300 trees, `max_samples="aut
 
 Local explanations are generated using ExIFFI, a model-specific feature-importance method that aggregates path weights along an observation's decision paths through an Isolation Forest.
 
-The path weight for node \(k\) is defined as:
-
-\[
-\lambda_k(x) = \frac{|X_k|}{|X_{k+1}|}
-\]
-
-where:
-
-- \(X_k\) is the set of training samples reaching the parent node.
-- \(X_{k+1}\) is the set of training samples reaching the child node.
-
 Feature contributions are aggregated across the relevant paths and trees, producing a feature-importance vector for each observation.
 
 ### Fidelity metric
