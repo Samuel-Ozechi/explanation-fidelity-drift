@@ -416,7 +416,3 @@ Fidelity is measured using training-period median substitution. Alternative pert
 ### Finite temporal windows
 
 Four evaluation windows establish directional trends but do not characterise every possible drift regime.
-
-### Underlying mechanism
-
-The analysis does not distinguish between attribution-weight redistribution and structural divergence as the underlying cause of the fidelity gap. This is a natural direction for future work.
